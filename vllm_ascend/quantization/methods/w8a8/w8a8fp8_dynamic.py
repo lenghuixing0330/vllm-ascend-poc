@@ -61,7 +61,7 @@ class AscendW8A8FP8DynamicLinearMethod(AscendW8A8DynamicLinearMethod):
     def apply(
         self,
         layer: torch.nn.Module,
-        x: torch.Tensor,
+        x: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
         bias: torch.Tensor | None = None,
         tp_rank: int | None = 0,
     ) -> torch.Tensor:
@@ -69,7 +69,8 @@ class AscendW8A8FP8DynamicLinearMethod(AscendW8A8DynamicLinearMethod):
         # TODO: there is a bug in npu_quant_matmul for fp8 with bias
         # after the bug is fixed, the whole apply method can be removed.
         if bias is not None:
-            output = (output + bias).to(x.dtype)
+            # The pre-quantized tuple path already pins the output dtype.
+            output = (output + bias).to(output.dtype if isinstance(x, tuple) else x.dtype)
         return output
 
 

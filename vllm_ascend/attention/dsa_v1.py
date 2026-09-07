@@ -1792,17 +1792,15 @@ class AscendDSAImpl(AttentionImplBase[Any]):
         write_swa_cache=True,
     ):
         """Run the MLA prolog on the current stream."""
-        share_hs_quant = _is_w8a8_dynamic(self.wq_a) and _is_w8a8_dynamic(self.wkv)
+        # Equal share keys + splittable => quantize() outputs are identical,
+        # so one dynamic quant serves both the q_a and kv projections.
+        # W8A8 already shared; this extends the sharing to MXFP8, which
+        # previously quantized the same hidden_states twice (once inside
+        # each apply()).
+        share_hs_quant = self.cv_wq_a.splittable and self.cv_wq_a.quant_share_key == self.cv_wkv.quant_share_key
         if share_hs_quant:
-            hs_int8, hs_pertoken_scale = torch_npu.npu_dynamic_quant(hidden_states)
-            q_a = torch_npu.npu_quant_matmul(
-                hs_int8,
-                self.wq_a.weight,
-                self.wq_a.weight_scale,
-                pertoken_scale=hs_pertoken_scale,
-                bias=self.wq_a.bias,
-                output_dtype=hidden_states.dtype,
-            )
+            hs_quant, hs_scale = self.cv_wq_a.quantize(hidden_states)
+            q_a = self.cv_wq_a.matmul(hs_quant, hs_scale, bias=self.wq_a.bias)
         else:
             q_a = self.wq_a(hidden_states)
 
@@ -1836,14 +1834,7 @@ class AscendDSAImpl(AttentionImplBase[Any]):
         # win kv & tok_dis
         if write_swa_cache:
             if share_hs_quant:
-                kv = torch_npu.npu_quant_matmul(
-                    hs_int8,
-                    self.wkv.weight,
-                    self.wkv.weight_scale,
-                    pertoken_scale=hs_pertoken_scale,
-                    bias=self.wkv.bias,
-                    output_dtype=hidden_states.dtype,
-                )
+                kv = self.cv_wkv.matmul(hs_quant, hs_scale, bias=self.wkv.bias)
             else:
                 kv = self.wkv(hidden_states)
             kv = self.kv_norm(kv)
@@ -1894,17 +1885,18 @@ class AscendDSAImpl(AttentionImplBase[Any]):
         is_w8a8 = _is_w8a8_dynamic(self.wq_b)
 
         # Part1: q_quant[V] -> q_a_down[C]  ||  kv_quant[V]
-        # When wq_a and wkv have the same quant_method and the same
-        # communication status, their quantize() outputs are equivalent.
-        # Share the result instead of calling quantize() twice on the same input.
-        # - W8A8 no-comm: saves one npu_dynamic_quant (full-tensor read + absmax).
-        # - W4A8 no-comm: saves one no-op pass-through (kernel launch + ref).
-        # - TP comm: both return (hidden_states, None); shareable when custom_op
-        #   types match (same communication path).
-        share_quant = (
-            type(self.cv_wq_a._quant_method) is type(self.cv_wkv._quant_method)
-            and self.cv_wq_a._has_communication == self.cv_wkv._has_communication
-        )
+        # Equal quant_share_keys mean wq_a and wkv run the same quantization
+        # (scheme family, act dtype, communication status), so their
+        # quantize() outputs are identical on the same input. Share the
+        # result instead of calling quantize() twice on the same input.
+        # - W8A8/MXFP8 no-comm: saves one full dynamic quant (tensor read +
+        #   absmax / per-group scale). Key equality also lets the DS
+        # block-quant subclass share with plain MXFP8, which type-identity
+        # checks disallowed.
+        # - Non-splittable pairs (W4A8, bf16): share the no-op pass-through
+        #   (saves a kernel launch + ref).
+        # - TP comm: both return (hidden_states, None); keys stay comparable.
+        share_quant = self.cv_wq_a.quant_share_key == self.cv_wkv.quant_share_key
         e_kv_quant_done = None
         if share_quant:
             q_quant, q_pertoken_scale = self.cv_wq_a.quantize(hidden_states)
@@ -1939,8 +1931,12 @@ class AscendDSAImpl(AttentionImplBase[Any]):
             )
             q_b_quant, q_b_scale = qr, qr_pertoken_scale
         else:
+            # MXFP8 (and other splittable schemes): quantize() is a real
+            # Vector op here, overlapped with kv_matmul (Cube) instead of
+            # sitting on the critical path inside Part3's matmul. Non-
+            # splittable schemes keep the bf16 pass-through.
             qr = self.q_norm(wq_a_result)
-            q_b_quant, q_b_scale = qr, None
+            q_b_quant, q_b_scale = self.cv_wq_b.quantize(qr)
             qr_pertoken_scale = None
 
         # Part3: q_b_matmul[C]  ||  kv_norm[V] + rope[V] + scatter[AIV]

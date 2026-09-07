@@ -93,11 +93,20 @@ class AscendW8A8DynamicLinearMethod(AscendLinearScheme):
     def apply(
         self,
         layer: torch.nn.Module,
-        x: torch.Tensor,
+        x: torch.Tensor | tuple[torch.Tensor, torch.Tensor],
         bias: torch.Tensor | None = None,
         tp_rank: int | None = 0,
     ) -> torch.Tensor:
-        quantized_x, pertoken_scale = torch_npu.npu_dynamic_quant(x, dst_type=self.act_quant_type)
+        if isinstance(x, tuple):
+            # Pre-quantized activation from split-quant callers (e.g.
+            # CVLinearWrapper): skip the internal quant. The tuple protocol
+            # does not carry the original activation dtype, so the output is
+            # pinned to bfloat16, matching the MXFP8 scheme's tuple path.
+            quantized_x, pertoken_scale = x
+            output_dtype = torch.bfloat16
+        else:
+            quantized_x, pertoken_scale = torch_npu.npu_dynamic_quant(x, dst_type=self.act_quant_type)
+            output_dtype = x.dtype
         need_unsqz = False
         if pertoken_scale.dim() == 2:
             need_unsqz = True
@@ -109,7 +118,7 @@ class AscendW8A8DynamicLinearMethod(AscendLinearScheme):
             layer.weight_scale,
             pertoken_scale=pertoken_scale,
             bias=bias if self.act_quant_type == torch.int8 else None,
-            output_dtype=x.dtype,
+            output_dtype=output_dtype,
         )
         if need_unsqz:
             output = output.unsqueeze(dim=1)
