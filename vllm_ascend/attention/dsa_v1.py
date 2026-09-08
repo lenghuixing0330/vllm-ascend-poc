@@ -1941,13 +1941,12 @@ class AscendDSAImpl(AttentionImplBase[Any]):
             )
             q_b_quant, q_b_scale = qr, qr_pertoken_scale
         else:
-            # MXFP8: quantize() is a real Vector op here (split out of the
-            # matmul), so it overlaps with kv_matmul (Cube) in Part2 instead
-            # of sitting on Part3's critical path. Non-splittable schemes
-            # (W4A8, bf16) keep the pass-through.
-            qr = self.q_norm(wq_a_result)
-            q_b_quant, q_b_scale = self.cv_wq_b.quantize(qr)
-            qr_pertoken_scale = None
+            # MXFP8: the split-out quantize() (Vector) overlaps with kv_matmul
+            # (Cube) in Part2, and the pair is returned for the Indexer to
+            # reuse. Non-splittable schemes (W4A8, bf16) keep the pass-through
+            # (scale stays None).
+            q_b_quant, q_b_scale = self.cv_wq_b.quantize(self.q_norm(wq_a_result))
+            qr, qr_pertoken_scale = q_b_quant, q_b_scale
 
         # Part3: q_b_matmul[C]  ||  kv_norm[V] + rope[V] + scatter[AIV]
         e_part3_start = main_stream.record_event()

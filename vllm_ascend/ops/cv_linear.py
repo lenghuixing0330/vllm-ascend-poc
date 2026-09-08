@@ -112,8 +112,6 @@ class CVLinearWrapper:
             return quantized_x, pertoken_scale
 
         if self._is_mxfp8_dynamic:
-            # Same op/args as the MXFP8 scheme's apply(), just split out so
-            # the quant (Vector) can overlap with Cube work on another stream.
             quantized_x, pertoken_scale = torch_npu.npu_dynamic_mx_quant(
                 x,
                 dst_type=torch.float8_e4m3fn,
@@ -159,10 +157,7 @@ class CVLinearWrapper:
             return output
 
         if self._is_mxfp8_dynamic:
-            # Mirrors the pre-quantized path of the MXFP8 scheme's apply():
-            # the quantized input no longer carries the activation dtype, so
-            # the output is pinned to bfloat16 (same convention as apply()'s
-            # tuple path).
+            # Mirrors the pre-quantized path of the MXFP8 scheme's apply()
             if bias is not None and bias.dtype != torch.float32:
                 bias = bias.to(torch.float32)
             return torch_npu.npu_quant_matmul(
