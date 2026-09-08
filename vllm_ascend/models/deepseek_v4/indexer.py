@@ -89,6 +89,8 @@ def _is_mxfp8_dynamic(linear) -> bool:
     quant_method = getattr(linear, "quant_method", None)
     if quant_method is None or isinstance(quant_method, AscendUnquantizedLinearMethod):
         return False
+    if isinstance(quant_method, AscendW8A8MXFP8DynamicLinearMethod):
+        return True
     inner_method = getattr(quant_method, "quant_method", None)
     return isinstance(inner_method, AscendW8A8MXFP8DynamicLinearMethod)
 
@@ -496,9 +498,7 @@ class DeepseekV4Indexer(nn.Module):
         # ===== Part0: Pre-compute on main =====
         # Reuse the prolog's pre-quantized qr when this layer's scheme
         # matches (W8A8 fused quant / MXFP8 split-quant).
-        if qr_pertoken_scale is not None and (
-            _is_w8a8_dynamic(self.wq_b) or _is_mxfp8_dynamic(self.wq_b)
-        ):
+        if qr_pertoken_scale is not None and (_is_w8a8_dynamic(self.wq_b) or _is_mxfp8_dynamic(self.wq_b)):
             qr_quant_ready = qr
             qr_scale_ready = qr_pertoken_scale
         else:

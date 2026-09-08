@@ -36,13 +36,10 @@ class CVLinearWrapper:
 
         # Detect quantization scheme
         # Handles two cases:
-        # 1. linear.quant_method is directly AscendW8A8DynamicLinearMethod
+        # 1. linear.quant_method is directly AscendW8A8DynamicLinearMethod or AscendW8A8MXFP8DynamicLinearMethod
         # 2. linear.quant_method is a wrapper class, requiring .quant_method to get the actual quantization method
         self._quant_method = linear.quant_method
         self._is_w8a8_dynamic = self._detect_w8a8_dynamic(linear.quant_method)
-        # Keep the inner MXFP8 scheme instance around: quantize()/matmul()
-        # read its scale_alg / group_size so the split path runs the exact
-        # same ops as the scheme's apply() (which quantizes internally).
         self._mxfp8_quant_method = self._detect_mxfp8_dynamic(linear.quant_method)
         self._is_mxfp8_dynamic = self._mxfp8_quant_method is not None
 
