@@ -1,0 +1,16 @@
+vllm_ascend/ops/cv_linear.py
+  h_baed7cc8dc67ce 39
+vllm_ascend/models/deepseek_v4/indexer.py
+  h_baed7cc8dc67ce 92-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.2",
+  "base_commit_sha": "3b9e43aec6ae1ea2611192e4e6a5774cdbded9ca",
+  "prompts": {},
+  "humans": {
+    "h_baed7cc8dc67ce": {
+      "author": "lenghuixing <lenghuixing@huawei.com>"
+    }
+  }
+}
